@@ -1,10 +1,8 @@
-"""
-Amharic Number Converter
-Converts Arabic numerals (integers) to Amharic text and vice-versa.
-"""
+import re
 
 class AmharicNumberConverter:
     def __init__(self):
+        # Mappings for word-to-number conversion
         self.ones_map = {
             "": 0, "አንድ": 1, "ሁለት": 2, "ሶስት": 3, "አራት": 4, 
             "አምስት": 5, "ስድስት": 6, "ሰባት": 7, "ስምንት": 8, "ዘጠኝ": 9
@@ -18,7 +16,7 @@ class AmharicNumberConverter:
             "ቢሊዮን": 1000000000, "ትሪሊዮን": 1000000000000
         }
         
-        # Lists for generation (numeric to text)
+        # Lists for number-to-word generation
         self.ones = ["", "አንድ", "ሁለት", "ሶስት", "አራት", "አምስት", "ስድስት", "ሰባት", "ስምንት", "ዘጠኝ"]
         self.tens = ["", "አስር", "ሃያ", "ሰላሳ", "አርባ", "ሃምሳ", "ስድሳ", "ሰባ", "ሰማንያ", "ዘጠና"]
         self.scales = ["", "መቶ", "ሺህ", "ሚሊዮን", "ቢሊዮን", "ትሪሊዮን"]
@@ -40,16 +38,15 @@ class AmharicNumberConverter:
 
     def convert_to_text(self, number: int) -> str:
         """Converts an integer to Amharic text."""
-        if not isinstance(number, int):
-            try:
-                number = int(number)
-            except (ValueError, TypeError):
-                return "እባክዎን ትክክለኛ ቁጥር ያስገቡ"
+        try:
+            num = int(number)
+        except (ValueError, TypeError):
+            return str(number)
 
-        if number == 0: return "ዜሮ"
+        if num == 0: return "ዜሮ"
         
-        is_negative = number < 0
-        num = abs(number)
+        is_negative = num < 0
+        num = abs(num)
         result_parts = []
         scale_idx = 0
 
@@ -58,30 +55,50 @@ class AmharicNumberConverter:
             if chunk > 0:
                 chunk_text = self._convert_below_thousand(chunk)
                 if scale_idx == 0:
-                    current_segment = chunk_text
+                    result_parts.insert(0, chunk_text)
                 elif scale_idx == 1:
                     label = "ሺህ"
-                    current_segment = f"አንድ {label}" if chunk == 1 else f"{chunk_text} {label}"
+                    result_parts.insert(0, f"አንድ {label}" if chunk == 1 else f"{chunk_text} {label}")
                 else:
                     label = self.scales[scale_idx + 1]
-                    current_segment = f"{chunk_text} {label}"
-                result_parts.insert(0, current_segment)
+                    result_parts.insert(0, f"{chunk_text} {label}")
             num //= 1000
             scale_idx += 1
 
-        text = " ".join(result_parts).replace("  ", " ").strip()
+        text = " ".join(result_parts).strip()
         return f"ከዜሮ በታች {text}" if is_negative else text
 
+    def process_sentence_to_text(self, text: str) -> str:
+        """Replaces all digits in a sentence with their Amharic word equivalents."""
+        if not text: return "ዜሮ"
+        return re.sub(r'-?\d+', lambda m: self.convert_to_text(int(m.group(0))), text)
+
+    def is_number_word(self, word: str) -> bool:
+        """Checks if a word is part of the Amharic number system."""
+        if not word: return False
+        if word in self.ones_map or word in self.tens_map or word in self.scales_map:
+            return True
+        if word in ["ከዜሮ", "በታች"]:
+            return True
+        if any(word.endswith(s) for s in ["መቶ", "ሺህ", "ሚሊዮን", "ቢሊዮን"]):
+            return True
+        for t_word in self.tens_map:
+            if t_word and word.startswith(t_word):
+                return True
+        return False
+
     def convert_to_number(self, text: str) -> int:
-        """Converts Amharic text back into an integer."""
-        if text == "ዜሮ": return 0
+        """Internal logic to parse a string of Amharic number words into an integer."""
+        if not text or text.strip() == "": return 0
+        clean_text = text.strip()
+        if clean_text == "ዜሮ": return 0
         
         is_negative = False
-        if text.startswith("ከዜሮ በታች"):
+        if "ከዜሮ በታች" in clean_text:
             is_negative = True
-            text = text.replace("ከዜሮ በታች", "").strip()
+            clean_text = clean_text.replace("ከዜሮ በታች", "").strip()
 
-        words = text.split()
+        words = clean_text.split()
         total = 0
         current_chunk = 0
         
@@ -91,45 +108,84 @@ class AmharicNumberConverter:
             elif word in self.tens_map:
                 current_chunk += self.tens_map[word]
             elif word == "መቶ":
-                # Handle "መቶ" which might be "አንድ መቶ" or just "መቶ"
                 if current_chunk == 0: current_chunk = 1
                 current_chunk *= 100
-            elif "መቶ" in word and word != "መቶ":
-                # Handle compounds like "ሁለትመቶ"
+            elif word.endswith("መቶ"):
                 prefix = word.replace("መቶ", "")
                 val = self.ones_map.get(prefix, 1)
                 current_chunk += val * 100
             elif word in self.scales_map:
-                # Scalers like Thousand, Million
                 if current_chunk == 0: current_chunk = 1
                 total += current_chunk * self.scales_map[word]
                 current_chunk = 0
             else:
-                # Support for combined words like "ሃያአምስት"
+                # Check for concatenated Tens + Ones (e.g., ሃያአምስት)
+                matched = False
                 for t_word, t_val in self.tens_map.items():
                     if t_word and word.startswith(t_word):
                         current_chunk += t_val
                         rem = word.replace(t_word, "")
                         current_chunk += self.ones_map.get(rem, 0)
+                        matched = True
                         break
+                
+                # Check for concatenated scales (e.g., አምስትሺህ)
+                if not matched:
+                    for s_word, s_val in self.scales_map.items():
+                        if word.endswith(s_word):
+                            prefix = word.replace(s_word, "")
+                            p_val = self.ones_map.get(prefix, 1)
+                            current_chunk += p_val * s_val
+                            total += current_chunk
+                            current_chunk = 0
+                            break
         
         total += current_chunk
         return -total if is_negative else total
 
-# --- Test Suite ---
+    def process_sentence_to_number(self, text: str) -> str:
+        """Replaces Amharic number word sequences in a sentence with formatted integers."""
+        if not text: return "0"
+        
+        # Tokenize preserving spaces and punctuation
+        tokens = re.split(r'(\s+|[.,!?;:])', text)
+        result = []
+        buffer = []
+
+        def flush_buffer():
+            if buffer:
+                num_text = "".join(buffer).strip()
+                if num_text:
+                    # Format with commas for readability
+                    result.append(f"{self.convert_to_number(num_text):,}")
+                buffer.clear()
+
+        for token in tokens:
+            if not token: continue
+            
+            clean_token = re.sub(r'[.,!?;:]', '', token.strip())
+            
+            if self.is_number_word(clean_token):
+                buffer.append(token)
+            elif token.isspace() and buffer:
+                buffer.append(token)
+            else:
+                flush_buffer()
+                result.append(token)
+        
+        flush_buffer()
+        return "".join(result)
+
+# --- Demo Usage ---
 if __name__ == "__main__":
     converter = AmharicNumberConverter()
     
-    # Test cases for bidirectional conversion
-    numbers = [125, 1001, 500000, 1234567, -42]
-    
-    print(f"{'Numeric':<10} | {'Amharic Text':<60} | {'Back to Num'}")
-    print("-" * 90)
-    for n in numbers:
-        text = converter.convert_to_text(n)
-        back = converter.convert_to_number(text)
-        print(f"{n:<10} | {text:<60} | {back}")
+    print("--- 1. Numeral to Amharic Words ---")
+    sentence_1 = "The price is ሰላም ሰላም ሰላም ሰላም ሰላም ሰላም  123456789 birr."
+    print(f"Input:  {sentence_1}")
+    print(f"Output: {converter.process_sentence_to_text(sentence_1)}\n")
 
-    # Manual word to number test
-    word_test = "ሁለት መቶ ሃምሳ"
-    print(f"\nManual Parse: '{word_test}' -> {converter.convert_to_number(word_test)}")
+    print("--- 2. Amharic Words to Numeral ---")
+    sentence_2 = "ሰላም መቶ ሃያ ሶስት ሚሊዮን አራትመቶ ሃምሳ ስድስት ሺህ ሰባትመቶ ሰማንያ ዘጠኝ ብር ስጠኝ"
+    print(f"Input:  {sentence_2}")
+    print(f"Output: {converter.process_sentence_to_number(sentence_2)}")
